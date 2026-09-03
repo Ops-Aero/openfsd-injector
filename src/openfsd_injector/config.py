@@ -33,7 +33,18 @@ MAX_FACILITY_TYPE = 6
 # 1=OBS 2=S1 3=S2 4=S3 5=C1 6=C2 7=C3 8=I1 9=I2 10=I3 11=SUP 12=ADM
 MIN_RATING = 1
 MAX_RATING = 12
+ADMINISTRATOR_RATING = 12
+# Tower ATIS (facility_type 4) needs S2 (3); C1 (5) is the recommended ceiling.
+RECOMMENDED_MAX_RATING = 5
 MAX_VIS_RANGE_NM = 1500
+SUPPORTED_VOICE_BACKENDS = ("", "none", "file", "tts")
+SUPPORTED_VOICE_ENGINES = ("", "auto", "edge-tts", "piper")
+ADMINISTRATOR_RATING_MESSAGE = (
+    "auth.rating 12 (Administrator) is refused: create a dedicated "
+    "least-privilege openFSD user for the injector (S2/3 for tower ATIS, "
+    "at most C1/5). Set auth.allow_administrator or "
+    "OPENFSD_ALLOW_ADMINISTRATOR=1 only if you intentionally accept this risk"
+)
 
 
 @dataclass
@@ -49,12 +60,14 @@ class AuthConfig:
     password: str = ""
     token: str = ""
     real_name: str = "ATIS Bot"
-    rating: int = 5
+    # S2 — enough for tower ATIS (facility_type 4); never default to ADM (12).
+    rating: int = 3
     protocol_revision: int = 100
     client_id: str = "0f5d"
     client_name: str = "openfsd-injector"
     client_major: int = 0
     client_minor: int = 1
+    allow_administrator: bool = False
 
 
 @dataclass
@@ -67,8 +80,14 @@ class InjectorConfig:
 class VoiceConfig:
     enabled: bool = False
     backend: str = "none"
+    # Ignored. Never used to fetch LiveATC or any other audio feed.
     scrape_url: str = ""
     cache_dir: str = "audio/cache"
+    # auto = edge-tts, then piper if voice.piper_model is set.
+    engine: str = "auto"
+    voice: str = "en-GB-SoniaNeural"
+    piper_model: str = ""
+    loop_silence_seconds: float = 2.0
 
 
 @dataclass
@@ -140,6 +159,20 @@ def _as_float(value: Any, where: str) -> float:
         raise ConfigError(f"{where} must be a number, got {value!r}") from None
 
 
+def _as_bool(value: Any, where: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off", ""}:
+            return False
+    raise ConfigError(f"{where} must be a boolean, got {value!r}")
+
+
 def _station_from_row(row: Any, index: int) -> StationConfig:
     where = f"plugins.atis.stations[{index}]"
     if not isinstance(row, dict):
@@ -186,6 +219,8 @@ def validate_config(cfg: AppConfig) -> None:
         problems.append(
             f"auth.rating must be between {MIN_RATING} and {MAX_RATING}, got {cfg.auth.rating}"
         )
+    if cfg.auth.rating == ADMINISTRATOR_RATING and not cfg.auth.allow_administrator:
+        problems.append(ADMINISTRATOR_RATING_MESSAGE)
     if cfg.auth.protocol_revision not in SUPPORTED_PROTOCOL_REVISIONS:
         problems.append(
             "auth.protocol_revision must be one of "
@@ -221,9 +256,27 @@ def validate_config(cfg: AppConfig) -> None:
                 "plugins.atis.reply_rate_window_seconds must be > 0, got "
                 f"{cfg.atis.reply_rate_window_seconds}"
             )
-        if cfg.atis.voice.backend not in {"", "none", "file", "tts"}:
+        if cfg.atis.voice.backend not in SUPPORTED_VOICE_BACKENDS:
             problems.append(
                 f"plugins.atis.voice.backend must be none|file|tts, got {cfg.atis.voice.backend!r}"
+            )
+        if cfg.atis.voice.engine not in SUPPORTED_VOICE_ENGINES:
+            problems.append(
+                "plugins.atis.voice.engine must be auto|edge-tts|piper, got "
+                f"{cfg.atis.voice.engine!r}"
+            )
+        if cfg.atis.voice.loop_silence_seconds < 0:
+            problems.append(
+                "plugins.atis.voice.loop_silence_seconds must be >= 0, got "
+                f"{cfg.atis.voice.loop_silence_seconds}"
+            )
+        if (
+            cfg.atis.voice.backend == "tts"
+            and cfg.atis.voice.engine == "piper"
+            and not cfg.atis.voice.piper_model.strip()
+        ):
+            problems.append(
+                "plugins.atis.voice.piper_model is required when voice.engine is piper"
             )
 
         seen: dict[str, int] = {}
@@ -291,6 +344,7 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
                 ("cid", "OPENFSD_CID"),
                 ("password", "OPENFSD_PASSWORD"),
                 ("token", "OPENFSD_TOKEN"),
+                ("allow_administrator", "OPENFSD_ALLOW_ADMINISTRATOR"),
             )
             if env in os.environ
         },
@@ -324,7 +378,7 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
             password=str(auth.get("password", "")),
             token=str(auth.get("token", "")),
             real_name=str(auth.get("real_name", "ATIS Bot")),
-            rating=_as_int(auth.get("rating", 5), "auth.rating"),
+            rating=_as_int(auth.get("rating", 3), "auth.rating"),
             protocol_revision=_as_int(
                 auth.get("protocol_revision", 100), "auth.protocol_revision"
             ),
@@ -332,6 +386,9 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
             client_name=str(auth.get("client_name", "openfsd-injector")),
             client_major=_as_int(auth.get("client_major", 0), "auth.client_major"),
             client_minor=_as_int(auth.get("client_minor", 1), "auth.client_minor"),
+            allow_administrator=_as_bool(
+                auth.get("allow_administrator", False), "auth.allow_administrator"
+            ),
         ),
         injector=InjectorConfig(
             reconnect_seconds=_as_float(
@@ -364,6 +421,13 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
                 backend=str(voice_raw.get("backend", "none")),
                 scrape_url=str(voice_raw.get("scrape_url", "")),
                 cache_dir=str(voice_raw.get("cache_dir", "audio/cache")),
+                engine=str(voice_raw.get("engine", "auto")),
+                voice=str(voice_raw.get("voice", "en-GB-SoniaNeural")),
+                piper_model=str(voice_raw.get("piper_model", "")),
+                loop_silence_seconds=_as_float(
+                    voice_raw.get("loop_silence_seconds", 2.0),
+                    "plugins.atis.voice.loop_silence_seconds",
+                ),
             ),
             stations=stations,
         ),
