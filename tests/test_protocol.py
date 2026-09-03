@@ -1,6 +1,7 @@
 from openfsd_injector.protocol import (
     build_add_atc,
     build_atc_position,
+    build_new_atis,
     encode_frequency,
     parse_query,
 )
@@ -40,3 +41,8 @@ def test_atc_position():
 def test_parse_atis_query():
     parsed = parse_query("$CQBAW123:EGLL_ATIS:ATIS")
     assert parsed == ("BAW123", "EGLL_ATIS", "ATIS", [])
+
+
+def test_new_atis_broadcast():
+    pkt = build_new_atis("EGLL_ATIS", "C")
+    assert pkt == "$CQEGLL_ATIS:@94835:NEWATIS:C"

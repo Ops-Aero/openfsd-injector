@@ -1,18 +1,27 @@
+# Defaults match Ops-Aero/opsaero-main after ./install.sh:
+#   FSD protocol     127.0.0.1:6809
+#   openfsd admin API 127.0.0.1:8010   ← JWT mint lives here
+#   Laravel website  127.0.0.1:8000   ← do not use this as api_base
+#
+# Seeded openfsd user: CID 1 / opsaeroadmin (network rating Administrator).
+
 server:
   host: 127.0.0.1
   port: 6809
-  # openFSD web API used to mint an FSD JWT. If omitted, the injector
-  # sends the password as a plaintext token (works when PLAINTEXT_PASSWORDS=true).
-  api_base: http://127.0.0.1:8000
+  # Optional. When set, POST {api_base}/api/v1/fsd-jwt immediately before #AA.
+  # Leave empty to send the CID password as the FSD token — openFSD always
+  # accepts that (no PLAINTEXT_PASSWORDS flag is required on OpsAero).
+  api_base: http://127.0.0.1:8010
 
 auth:
-  cid: 100000
-  password: changeme
+  cid: 1
+  password: opsaeroadmin
   # Optional pre-minted JWT. If set, api_base is not called.
   token: ""
   real_name: "ATIS Bot"
-  # VATSIM-style network rating. Must not exceed the CID's stored rating.
+  # Must not exceed the CID's stored rating. CID 1 is Administrator (12).
   # 1=OBS 2=S1 3=S2 4=S3 5=C1 7=C3 8=I1 11=SUP 12=ADM
+  # Tower ATIS (facility_type 4) needs at least S2 (3).
   rating: 5
   protocol_revision: 100
   # Harmless client identifier shown in $ID. Not a VATSIM whitelist on openFSD.
@@ -45,7 +54,7 @@ plugins:
         lat: 51.4775
         lon: -0.4614
         vis_range_nm: 60
-        facility_type: 4     # Tower, visible to pilots as an ATC station
+        facility_type: 4     # Tower — allowed for rating >= S2 on openFSD
         runways_dep: "27L, 27R"
         runways_arr: "27L, 27R"
         approach: "ILS"

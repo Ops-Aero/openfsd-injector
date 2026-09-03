@@ -9,7 +9,7 @@ from ..atis.voice import VoiceBackend
 from ..auth import resolve_token
 from ..client import FsdClient
 from ..config import AppConfig, StationConfig
-from ..protocol import build_query_response, parse_query
+from ..protocol import build_new_atis, build_query_response, parse_query
 from .base import Plugin
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,8 @@ class StationRuntime:
 
     async def start(self) -> None:
         await self.refresh_atis(initial=True)
+        # Mint immediately before #AA — OpsAero FSD JWTs expire in five minutes.
+        self.token = await resolve_token(self.app)
         await self.client.connect_atc(self.station.callsign, self.token)
         await self.client.send_position(
             self.station.frequency,
@@ -71,6 +73,11 @@ class StationRuntime:
         self.state.metar = metar
         self.state.lines = build_lines(self.station, self.state.letter, metar)
         log.info("%s information %s (%d lines)", self.station.icao, self.state.letter, len(self.state.lines))
+        if not initial and self.client.connected.is_set():
+            try:
+                await self.client.send(build_new_atis(self.station.callsign, self.state.letter))
+            except Exception:
+                log.exception("NEWATIS broadcast failed for %s", self.station.callsign)
         try:
             await self.voice.refresh(self.station, self.state.lines)
         except Exception:
@@ -143,7 +150,9 @@ class AtisPlugin(Plugin):
             return
         token = await resolve_token(self.cfg)
         self._runtimes = [StationRuntime(self.cfg, st, token) for st in self.cfg.atis.stations]
-        await asyncio.gather(*(rt.start() for rt in self._runtimes))
+        # Connect sequentially so each station can mint a fresh JWT if needed.
+        for rt in self._runtimes:
+            await rt.start()
 
     async def stop(self) -> None:
         await asyncio.gather(*(rt.stop() for rt in self._runtimes), return_exceptions=True)

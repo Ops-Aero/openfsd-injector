@@ -79,6 +79,11 @@ def build_atc_position(
     )
 
 
+def build_new_atis(callsign: str, letter: str) -> str:
+    """Notify in-range ATC that this station's information letter changed."""
+    return f"$CQ{callsign}:@94835:NEWATIS:{letter}"
+
+
 def build_query_response(from_cs: str, to_cs: str, qtype: str, *payload: str) -> str:
     tail = ":".join(payload)
     if tail:
