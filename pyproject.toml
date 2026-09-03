@@ -1,0 +1,25 @@
+[project]
+name = "openfsd-injector"
+version = "0.1.0"
+description = "Plugin injector for self-hosted openFSD servers"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27",
+  "pyyaml>=6.0",
+  "python-dotenv>=1.0",
+]
+
+[project.scripts]
+openfsd-injector = "openfsd_injector.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

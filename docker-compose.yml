@@ -1,0 +1,10 @@
+services:
+  injector:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./audio:/app/audio
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
