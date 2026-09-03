@@ -1,0 +1,53 @@
+server:
+  host: 127.0.0.1
+  port: 6809
+  # openFSD web API used to mint an FSD JWT. If omitted, the injector
+  # sends the password as a plaintext token (works when PLAINTEXT_PASSWORDS=true).
+  api_base: http://127.0.0.1:8000
+
+auth:
+  cid: 100000
+  password: changeme
+  # Optional pre-minted JWT. If set, api_base is not called.
+  token: ""
+  real_name: "ATIS Bot"
+  # VATSIM-style network rating. Must not exceed the CID's stored rating.
+  # 1=OBS 2=S1 3=S2 4=S3 5=C1 7=C3 8=I1 11=SUP 12=ADM
+  rating: 5
+  protocol_revision: 100
+  # Harmless client identifier shown in $ID. Not a VATSIM whitelist on openFSD.
+  client_id: "0f5d"
+  client_name: "openfsd-injector"
+  client_major: 0
+  client_minor: 1
+
+injector:
+  reconnect_seconds: 5
+  position_interval_seconds: 5
+
+plugins:
+  atis:
+    enabled: true
+    # How often to rebuild text ATIS from METAR.
+    refresh_seconds: 3600
+    metar_url: "https://aviationweather.gov/api/data/metar?ids={icao}&format=raw"
+    # Voice is a stub in v0.1. Files land in audio/cache/.
+    voice:
+      enabled: false
+      backend: none          # none | file | tts
+      scrape_url: ""         # reserved for a future hourly audio grab
+      cache_dir: audio/cache
+    stations:
+      - icao: EGLL
+        name: "Heathrow Information"
+        callsign: EGLL_ATIS
+        frequency: 128.080
+        lat: 51.4775
+        lon: -0.4614
+        vis_range_nm: 60
+        facility_type: 4     # Tower, visible to pilots as an ATC station
+        runways_dep: "27L, 27R"
+        runways_arr: "27L, 27R"
+        approach: "ILS"
+        extra_lines:
+          - "SIMULTANEOUS DEPARTURES IN PROGRESS"
