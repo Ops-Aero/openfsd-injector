@@ -6,7 +6,9 @@ import logging
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
+from ..atis.audio_http import AudioCatalog, AudioHttpServer
 from ..atis.builder import AtisState, build_lines, next_letter
 from ..atis.metar import fetch_metar
 from ..atis.voice import VoiceBackend
@@ -71,9 +73,15 @@ class ReplyRateLimiter:
 
 
 class StationRuntime:
-    def __init__(self, app: AppConfig, station: StationConfig) -> None:
+    def __init__(
+        self,
+        app: AppConfig,
+        station: StationConfig,
+        catalog: AudioCatalog | None = None,
+    ) -> None:
         self.app = app
         self.station = station
+        self.catalog = catalog
         self.token = ""
         self.state = AtisState()
         self.client = FsdClient(app.server.host, app.server.port, app.auth)
@@ -153,6 +161,12 @@ class StationRuntime:
             await self.voice.refresh(self.station, self.state.lines, self.state.letter)
         except Exception:
             log.exception("voice refresh failed for %s", self.station.icao)
+        self._publish_audio_index()
+
+    def _publish_audio_index(self) -> None:
+        if self.catalog is None:
+            return
+        self.catalog.refresh_station(self.station, self.state.letter)
 
     async def _position_loop(self) -> None:
         interval = self.app.injector.position_interval_seconds
@@ -216,9 +230,11 @@ class StationSupervisor:
         app: AppConfig,
         station: StationConfig,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        catalog: AudioCatalog | None = None,
     ) -> None:
         self.app = app
         self.station = station
+        self.catalog = catalog
         self.runtime: StationRuntime | None = None
         self.restarts = 0
         self._sleep = sleep
@@ -255,7 +271,7 @@ class StationSupervisor:
         delay = base
         loop = asyncio.get_running_loop()
         while True:
-            runtime = StationRuntime(self.app, self.station)
+            runtime = StationRuntime(self.app, self.station, catalog=self.catalog)
             self.runtime = runtime
             started = loop.time()
             try:
@@ -291,6 +307,8 @@ class AtisPlugin(Plugin):
     def __init__(self, cfg: AppConfig) -> None:
         super().__init__(cfg)
         self._supervisors: list[StationSupervisor] = []
+        self._catalog: AudioCatalog | None = None
+        self._audio_http: AudioHttpServer | None = None
 
     async def start(self) -> None:
         if not self.cfg.atis.enabled:
@@ -302,8 +320,36 @@ class AtisPlugin(Plugin):
         # Fail before spawning anything if no credential is configured. Each
         # station still mints its own token immediately before #AA.
         require_credential(self.cfg)
+        self._catalog = AudioCatalog(Path(self.cfg.atis.voice.cache_dir))
+        for st in self.cfg.atis.stations:
+            self._catalog.register(st)
+        if self.cfg.atis.audio_http.enabled:
+            self._audio_http = AudioHttpServer(
+                self._catalog,
+                self.cfg.atis.audio_http.host,
+                self.cfg.atis.audio_http.port,
+            )
+            try:
+                await self._audio_http.start()
+            except OSError as exc:
+                raise ConfigError(
+                    f"ATIS audio HTTP could not bind {self.cfg.atis.audio_http.host}:"
+                    f"{self.cfg.atis.audio_http.port}: {exc}"
+                ) from exc
+            log.info(
+                "ATIS audio index at http://%s:%s/atis/index.json",
+                self.cfg.atis.audio_http.host,
+                self._audio_http.bound_port,
+            )
+        if self.cfg.atis.audio_http.srs_host:
+            log.info(
+                "SRS_HOST=%s is set but no in-process Linux SRS transmitter "
+                "is bundled — use the audio HTTP index; radio egress remains issue #2",
+                self.cfg.atis.audio_http.srs_host,
+            )
         self._supervisors = [
-            StationSupervisor(self.cfg, st) for st in self.cfg.atis.stations
+            StationSupervisor(self.cfg, st, catalog=self._catalog)
+            for st in self.cfg.atis.stations
         ]
         for supervisor in self._supervisors:
             supervisor.start()
@@ -326,3 +372,8 @@ class AtisPlugin(Plugin):
         await asyncio.gather(
             *(s.stop() for s in supervisors), return_exceptions=True
         )
+        server, self._audio_http = self._audio_http, None
+        if server is not None:
+            with contextlib.suppress(Exception):
+                await server.stop()
+        self._catalog = None

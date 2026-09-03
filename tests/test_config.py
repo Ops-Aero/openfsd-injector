@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from openfsd_injector.airports import DEFAULT_ATIS_ICAOS, DEFAULT_ATIS_ICAOS_CSV
 from openfsd_injector.config import (
     ADMINISTRATOR_RATING,
     ADMINISTRATOR_RATING_MESSAGE,
@@ -51,6 +52,11 @@ ENV_VARS = (
     "OPENFSD_CONFIG",
     "ATIS_ICAOS",
     "VOICE_BACKEND",
+    "AUDIO_HTTP",
+    "AUDIO_HTTP_HOST",
+    "AUDIO_HTTP_PORT",
+    "AUDIO_HTTP_PUBLISH",
+    "SRS_HOST",
 )
 
 
@@ -321,6 +327,19 @@ def test_c1_rating_is_allowed_without_override(tmp_path):
     assert load_config(write_config(tmp_path, mutate)).auth.rating == 5
 
 
+def test_atis_icaos_expands_full_default_list(tmp_path, monkeypatch):
+    def mutate(data):
+        data["plugins"]["atis"]["stations"] = []
+
+    path = write_config(tmp_path, mutate)
+    monkeypatch.setenv("ATIS_ICAOS", DEFAULT_ATIS_ICAOS_CSV)
+    cfg = load_config(path)
+    assert [st.icao for st in cfg.atis.stations] == list(DEFAULT_ATIS_ICAOS)
+    assert all(st.callsign == f"{st.icao}_ATIS" for st in cfg.atis.stations)
+    assert len(cfg.atis.stations) == len(DEFAULT_ATIS_ICAOS)
+    assert cfg.auth.rating != ADMINISTRATOR_RATING
+
+
 def test_atis_icaos_expands_when_stations_missing(tmp_path, monkeypatch):
     def mutate(data):
         data["plugins"]["atis"]["stations"] = []
@@ -435,8 +454,18 @@ def test_shipped_example_uses_empty_stations_for_env_expansion():
     example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text())
     assert example["plugins"]["atis"]["stations"] == []
     env = (REPO_ROOT / ".env.example").read_text()
-    assert "ATIS_ICAOS=EGLL,EGKK" in env
+    assert f"ATIS_ICAOS={DEFAULT_ATIS_ICAOS_CSV}" in env
+    assert parse_env_atis_icaos(env) == list(DEFAULT_ATIS_ICAOS)
     assert "VOICE_BACKEND" in env
+    assert "AUDIO_HTTP_PORT=8091" in env
+    assert "injector:8091/atis/index.json" in env or "8091" in env
+
+
+def parse_env_atis_icaos(text: str) -> list[str]:
+    for line in text.splitlines():
+        if line.startswith("ATIS_ICAOS="):
+            return [part.strip() for part in line.split("=", 1)[1].split(",") if part.strip()]
+    raise AssertionError("ATIS_ICAOS missing from .env.example")
 
 
 def test_shipped_env_example_carries_no_credential():

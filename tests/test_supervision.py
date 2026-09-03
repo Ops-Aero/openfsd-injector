@@ -7,6 +7,7 @@ import pytest
 from openfsd_injector.config import (
     AppConfig,
     AtisPluginConfig,
+    AudioHttpConfig,
     AuthConfig,
     InjectorConfig,
     MissingCredentialError,
@@ -28,6 +29,7 @@ def make_app(tmp_path, reconnect: float = 0.01, stations: int = 1) -> AppConfig:
         atis=AtisPluginConfig(
             refresh_seconds=3600,
             voice=VoiceConfig(cache_dir=str(tmp_path / "cache")),
+            audio_http=AudioHttpConfig(enabled=False),
             stations=[
                 StationConfig(
                     icao=f"EG{i:02d}",
@@ -55,9 +57,10 @@ class FakeRuntime:
     start_failure: BaseException | None = None
     start_event: asyncio.Event | None = None
 
-    def __init__(self, app: AppConfig, station: StationConfig) -> None:
+    def __init__(self, app: AppConfig, station: StationConfig, catalog=None, **_kwargs) -> None:
         self.app = app
         self.station = station
+        self.catalog = catalog
 
     async def start(self) -> None:
         type(self).started += 1

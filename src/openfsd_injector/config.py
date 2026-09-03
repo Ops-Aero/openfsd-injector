@@ -40,6 +40,7 @@ RECOMMENDED_MAX_RATING = 5
 MAX_VIS_RANGE_NM = 1500
 SUPPORTED_VOICE_BACKENDS = ("", "none", "file", "tts")
 SUPPORTED_VOICE_ENGINES = ("", "auto", "edge-tts", "piper")
+DEFAULT_AUDIO_HTTP_PORT = 8091
 ADMINISTRATOR_RATING_MESSAGE = (
     "auth.rating 12 (Administrator) is refused: create a dedicated "
     "least-privilege openFSD user for the injector (S2/3 for tower ATIS, "
@@ -92,6 +93,17 @@ class VoiceConfig:
 
 
 @dataclass
+class AudioHttpConfig:
+    """Serve cached WAV/OGG on an internal port for opsaero-main/client."""
+
+    enabled: bool = True
+    host: str = "0.0.0.0"
+    port: int = DEFAULT_AUDIO_HTTP_PORT
+    # Reserved. Empty = off. Do not block on a full SRS client.
+    srs_host: str = ""
+
+
+@dataclass
 class StationConfig:
     icao: str = ""
     name: str = ""
@@ -117,6 +129,7 @@ class AtisPluginConfig:
     reply_rate_limit: int = 6
     reply_rate_window_seconds: float = 60.0
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    audio_http: AudioHttpConfig = field(default_factory=AudioHttpConfig)
     stations: list[StationConfig] = field(default_factory=list)
 
 
@@ -197,6 +210,47 @@ def resolve_voice_enabled(voice_raw: dict[str, Any], backend: str) -> bool:
     if "enabled" in voice_raw:
         return _as_bool(voice_raw["enabled"], "plugins.atis.voice.enabled")
     return backend == "tts"
+
+
+def resolve_audio_http_enabled(audio_raw: dict[str, Any]) -> bool:
+    """``AUDIO_HTTP`` wins; else yaml; else on (the first-party audio path)."""
+    env = os.environ.get("AUDIO_HTTP")
+    if env is not None and env.strip() != "":
+        return _as_bool(env, "AUDIO_HTTP")
+    if "enabled" in audio_raw:
+        return _as_bool(audio_raw["enabled"], "plugins.atis.audio_http.enabled")
+    return True
+
+
+def resolve_audio_http_host(audio_raw: dict[str, Any]) -> str:
+    """Compose binds ``0.0.0.0``. Host Python binds loopback unless publish is set."""
+    env_host = os.environ.get("AUDIO_HTTP_HOST")
+    if env_host is not None and env_host.strip() != "":
+        return env_host.strip()
+    raw = audio_raw.get("host")
+    if raw not in (None, ""):
+        return str(raw).strip()
+    publish = os.environ.get("AUDIO_HTTP_PUBLISH", "")
+    if publish.strip() != "" and _as_bool(publish, "AUDIO_HTTP_PUBLISH"):
+        return "0.0.0.0"
+    if running_in_docker():
+        return "0.0.0.0"
+    return "127.0.0.1"
+
+
+def resolve_audio_http_port(audio_raw: dict[str, Any]) -> int:
+    env_port = os.environ.get("AUDIO_HTTP_PORT")
+    if env_port is not None and env_port.strip() != "":
+        return _as_int(env_port, "AUDIO_HTTP_PORT")
+    return _as_int(audio_raw.get("port", DEFAULT_AUDIO_HTTP_PORT), "plugins.atis.audio_http.port")
+
+
+def resolve_srs_host(audio_raw: dict[str, Any]) -> str:
+    """Optional. Empty keeps the SRS loop off — HTTP is the first-party path."""
+    env = os.environ.get("SRS_HOST")
+    if env is not None:
+        return env.strip()
+    return str(audio_raw.get("srs_host", "")).strip()
 
 
 def stations_from_atis_icaos(value: str) -> list[StationConfig]:
@@ -325,7 +379,7 @@ def validate_config(cfg: AppConfig) -> None:
         if not cfg.atis.stations:
             problems.append(
                 "no ATIS stations: set plugins.atis.stations in config.yaml "
-                "or ATIS_ICAOS=EGLL,EGKK"
+                "or ATIS_ICAOS (see .env.example majors list)"
             )
         if cfg.atis.voice.loop_silence_seconds < 0:
             problems.append(
@@ -340,6 +394,14 @@ def validate_config(cfg: AppConfig) -> None:
             problems.append(
                 "plugins.atis.voice.piper_model is required when voice.engine is piper"
             )
+        if cfg.atis.audio_http.enabled:
+            if not cfg.atis.audio_http.host.strip():
+                problems.append("plugins.atis.audio_http.host must not be empty")
+            if not 0 <= cfg.atis.audio_http.port <= 65535:
+                problems.append(
+                    "plugins.atis.audio_http.port must be between 0 and 65535, "
+                    f"got {cfg.atis.audio_http.port}"
+                )
 
         seen: dict[str, int] = {}
         for index, st in enumerate(cfg.atis.stations):
@@ -423,6 +485,9 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
     voice_raw = atis_raw.get("voice") or {}
     if not isinstance(voice_raw, dict):
         raise ConfigError("plugins.atis.voice must be a mapping")
+    audio_http_raw = atis_raw.get("audio_http") or {}
+    if not isinstance(audio_http_raw, dict):
+        raise ConfigError("plugins.atis.audio_http must be a mapping")
 
     stations_raw = atis_raw.get("stations")
     if stations_raw in (None, []):
@@ -494,6 +559,12 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
                     voice_raw.get("loop_silence_seconds", 2.0),
                     "plugins.atis.voice.loop_silence_seconds",
                 ),
+            ),
+            audio_http=AudioHttpConfig(
+                enabled=resolve_audio_http_enabled(audio_http_raw),
+                host=resolve_audio_http_host(audio_http_raw),
+                port=resolve_audio_http_port(audio_http_raw),
+                srs_host=resolve_srs_host(audio_http_raw),
             ),
             stations=stations,
         ),
