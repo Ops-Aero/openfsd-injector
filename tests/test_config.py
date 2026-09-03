@@ -49,6 +49,8 @@ ENV_VARS = (
     "OPENFSD_TOKEN",
     "OPENFSD_ALLOW_ADMINISTRATOR",
     "OPENFSD_CONFIG",
+    "ATIS_ICAOS",
+    "VOICE_BACKEND",
 )
 
 
@@ -319,6 +321,124 @@ def test_c1_rating_is_allowed_without_override(tmp_path):
     assert load_config(write_config(tmp_path, mutate)).auth.rating == 5
 
 
+def test_atis_icaos_expands_when_stations_missing(tmp_path, monkeypatch):
+    def mutate(data):
+        data["plugins"]["atis"]["stations"] = []
+
+    path = write_config(tmp_path, mutate)
+    monkeypatch.setenv("ATIS_ICAOS", "EGLL, EGKK")
+    cfg = load_config(path)
+    assert [st.icao for st in cfg.atis.stations] == ["EGLL", "EGKK"]
+    assert cfg.atis.stations[0].callsign == "EGLL_ATIS"
+    assert cfg.atis.stations[0].lat == 51.4775
+    assert cfg.atis.stations[0].lon == -0.4614
+    assert cfg.atis.stations[1].callsign == "EGKK_ATIS"
+    assert cfg.atis.stations[1].lat == 51.1481
+    assert cfg.atis.stations[1].frequency == 136.525
+
+
+def test_config_yaml_stations_override_atis_icaos(tmp_path, monkeypatch):
+    monkeypatch.setenv("ATIS_ICAOS", "EGKK")
+    cfg = load_config(write_config(tmp_path))
+    assert [st.icao for st in cfg.atis.stations] == ["EGLL"]
+    assert cfg.atis.stations[0].callsign == "EGLL_ATIS"
+
+
+def test_unknown_icao_in_atis_icaos_fails(tmp_path, monkeypatch):
+    def mutate(data):
+        data["plugins"]["atis"].pop("stations")
+
+    path = write_config(tmp_path, mutate)
+    monkeypatch.setenv("ATIS_ICAOS", "EGLL,ZZZZ")
+    with pytest.raises(ConfigError, match="ZZZZ"):
+        load_config(path)
+
+
+def test_no_stations_and_no_atis_icaos_fails(tmp_path):
+    def mutate(data):
+        data["plugins"]["atis"]["stations"] = []
+
+    with pytest.raises(ConfigError, match="ATIS_ICAOS"):
+        load_config(write_config(tmp_path, mutate))
+
+
+def test_env_only_bringup_without_config_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENFSD_CID", "999999")
+    monkeypatch.setenv("OPENFSD_PASSWORD", FAKE_PASSWORD)
+    monkeypatch.setenv("ATIS_ICAOS", "EGLL,EGKK")
+    cfg = load_config(tmp_path / "does-not-exist.yaml")
+    assert [st.icao for st in cfg.atis.stations] == ["EGLL", "EGKK"]
+    assert cfg.auth.rating == 3
+    assert cfg.auth.allow_administrator is False
+    assert cfg.atis.voice.backend == "none"
+    assert cfg.atis.voice.enabled is False
+
+
+def test_voice_backend_tts_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("VOICE_BACKEND", "tts")
+    cfg = load_config(write_config(tmp_path))
+    assert cfg.atis.voice.backend == "tts"
+    assert cfg.atis.voice.enabled is True
+
+
+def test_voice_backend_defaults_to_tts_in_docker_when_unset(tmp_path, monkeypatch):
+    def mutate(data):
+        data["plugins"]["atis"].pop("voice", None)
+
+    monkeypatch.setattr("openfsd_injector.config.running_in_docker", lambda: True)
+    cfg = load_config(write_config(tmp_path, mutate))
+    assert cfg.atis.voice.backend == "tts"
+    assert cfg.atis.voice.enabled is True
+
+
+def test_voice_backend_stays_none_outside_docker_when_unset(tmp_path, monkeypatch):
+    def mutate(data):
+        data["plugins"]["atis"].pop("voice", None)
+
+    monkeypatch.setattr("openfsd_injector.config.running_in_docker", lambda: False)
+    cfg = load_config(write_config(tmp_path, mutate))
+    assert cfg.atis.voice.backend == "none"
+    assert cfg.atis.voice.enabled is False
+
+
+def test_voice_backend_yaml_overrides_docker_default(tmp_path, monkeypatch):
+    def mutate(data):
+        data["plugins"]["atis"]["voice"] = {"backend": "none", "enabled": False}
+
+    monkeypatch.setattr("openfsd_injector.config.running_in_docker", lambda: True)
+    cfg = load_config(write_config(tmp_path, mutate))
+    assert cfg.atis.voice.backend == "none"
+    assert cfg.atis.voice.enabled is False
+
+
+def test_voice_backend_env_none_in_docker(tmp_path, monkeypatch):
+    monkeypatch.setattr("openfsd_injector.config.running_in_docker", lambda: True)
+    monkeypatch.setenv("VOICE_BACKEND", "none")
+    cfg = load_config(write_config(tmp_path))
+    assert cfg.atis.voice.backend == "none"
+    assert cfg.atis.voice.enabled is False
+
+
+def test_administrator_still_fails_on_env_only_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENFSD_CID", "999999")
+    monkeypatch.setenv("OPENFSD_PASSWORD", FAKE_PASSWORD)
+    monkeypatch.setenv("ATIS_ICAOS", "EGLL")
+    path = tmp_path / "env-only.yaml"
+    path.write_text("auth:\n  rating: 12\n")
+    with pytest.raises(ConfigError, match="Administrator") as exc:
+        load_config(path)
+    assert "OPENFSD_ALLOW_ADMINISTRATOR" in str(exc.value)
+    assert ADMINISTRATOR_RATING_MESSAGE in str(exc.value)
+
+
+def test_shipped_example_uses_empty_stations_for_env_expansion():
+    example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text())
+    assert example["plugins"]["atis"]["stations"] == []
+    env = (REPO_ROOT / ".env.example").read_text()
+    assert "ATIS_ICAOS=EGLL,EGKK" in env
+    assert "VOICE_BACKEND" in env
+
+
 def test_shipped_env_example_carries_no_credential():
     """.env.example must only contain replace-me placeholders."""
     text = (REPO_ROOT / ".env.example").read_text()
@@ -330,3 +450,11 @@ def test_shipped_env_example_carries_no_credential():
     assert values["OPENFSD_CID"].startswith("replace-with-your-own")
     assert values["OPENFSD_PASSWORD"].startswith("replace-with-your-own")
     assert not (REPO_ROOT / "docker.env").exists()
+    compose = (REPO_ROOT / "docker-compose.yml").read_text()
+    assert "env_file:" in compose
+    assert "- docker.env" not in compose
+    assert "- .env" in compose
+    assert "host.docker.internal:host-gateway" in compose
+    assert "name: opsaero" in compose
+    assert "OPENFSD_HOST=fsd" in compose
+    assert "http://fsdweb:8010" in compose

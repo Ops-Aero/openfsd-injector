@@ -16,7 +16,7 @@ from openfsd_injector.atis.voice import (
     information_letter,
     write_pcm_wav,
 )
-from openfsd_injector.config import StationConfig, VoiceConfig
+from openfsd_injector.config import StationConfig, VoiceConfig, load_config
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -186,7 +186,53 @@ def test_example_config_does_not_enable_liveatc_scrape():
     example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text())
     voice = example["plugins"]["atis"]["voice"]
     assert voice["scrape_url"] == ""
-    assert voice["backend"] in {"none", "file", "tts"}
+    assert voice.get("backend", "none") in {"none", "file", "tts"}
     text = (REPO_ROOT / "config.example.yaml").read_text().lower()
     assert "liveatc.net" not in text
     assert "http" not in voice["scrape_url"]
+
+
+@pytest.mark.asyncio
+async def test_docker_default_tts_uses_fake_synthesizer(tmp_path, monkeypatch):
+    """In-docker default backend is tts; synthesis is injected, never a real API."""
+    config = {
+        "server": {"host": "127.0.0.1", "port": 6809},
+        "auth": {"cid": 999999, "password": "fake-password-not-a-real-credential"},
+        "plugins": {
+            "atis": {
+                "stations": [
+                    {
+                        "icao": "EGLL",
+                        "frequency": 128.080,
+                        "lat": 51.4775,
+                        "lon": -0.4614,
+                    }
+                ]
+            }
+        },
+    }
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(config))
+    monkeypatch.delenv("VOICE_BACKEND", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("openfsd_injector.config.running_in_docker", lambda: True)
+    cfg = load_config(path)
+    assert cfg.atis.voice.backend == "tts"
+    assert cfg.atis.voice.enabled is True
+
+    class Boom:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("docker-default TTS must not call HTTP")
+
+    monkeypatch.setattr(httpx, "AsyncClient", Boom)
+    cfg.atis.voice.cache_dir = str(tmp_path / "cache")
+    fake = FakeSynthesizer()
+    voice = VoiceBackend(
+        cfg.atis.voice,
+        synthesizer=fake,
+        transcode=lambda src, dest: dest.write_bytes(src.read_bytes()),
+    )
+    written = await voice.refresh(station(), LINES_C, "C")
+    assert written is not None
+    assert written.is_file()
+    assert len(fake.calls) == 1

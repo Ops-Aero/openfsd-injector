@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
+from .airports import lookup_airport, parse_atis_icaos
 from .protocol import encode_frequency
 
 
@@ -173,6 +174,62 @@ def _as_bool(value: Any, where: str) -> bool:
     raise ConfigError(f"{where} must be a boolean, got {value!r}")
 
 
+def running_in_docker() -> bool:
+    """True when the process is inside a container (``/.dockerenv``)."""
+    return Path("/.dockerenv").exists()
+
+
+def resolve_voice_backend(voice_raw: dict[str, Any]) -> str:
+    """``VOICE_BACKEND`` wins; else yaml; else ``tts`` in Docker, ``none`` on the host."""
+    env_backend = os.environ.get("VOICE_BACKEND")
+    if env_backend is not None and env_backend.strip() != "":
+        return env_backend.strip().lower()
+    raw = voice_raw.get("backend")
+    if raw not in (None, ""):
+        return str(raw).strip().lower()
+    if running_in_docker():
+        return "tts"
+    return "none"
+
+
+def resolve_voice_enabled(voice_raw: dict[str, Any], backend: str) -> bool:
+    """Yaml ``enabled`` is the override; otherwise TTS is on when the backend is ``tts``."""
+    if "enabled" in voice_raw:
+        return _as_bool(voice_raw["enabled"], "plugins.atis.voice.enabled")
+    return backend == "tts"
+
+
+def stations_from_atis_icaos(value: str) -> list[StationConfig]:
+    """Build stations from ``ATIS_ICAOS`` using the built-in airport table."""
+    stations: list[StationConfig] = []
+    unknown: list[str] = []
+    for icao in parse_atis_icaos(value):
+        try:
+            info = lookup_airport(icao)
+        except KeyError:
+            unknown.append(icao)
+            continue
+        stations.append(
+            StationConfig(
+                icao=info.icao,
+                name=info.name,
+                callsign=f"{info.icao}_ATIS",
+                frequency=info.frequency,
+                lat=info.lat,
+                lon=info.lon,
+                vis_range_nm=info.vis_range_nm,
+                facility_type=info.facility_type,
+            )
+        )
+    if unknown:
+        listed = ", ".join(repr(code) for code in unknown)
+        raise ConfigError(
+            f"ATIS_ICAOS ICAO(s) {listed} not in the built-in airport table; "
+            "add a station entry to config.yaml (lat/lon/frequency) instead"
+        )
+    return stations
+
+
 def _station_from_row(row: Any, index: int) -> StationConfig:
     where = f"plugins.atis.stations[{index}]"
     if not isinstance(row, dict):
@@ -264,6 +321,11 @@ def validate_config(cfg: AppConfig) -> None:
             problems.append(
                 "plugins.atis.voice.engine must be auto|edge-tts|piper, got "
                 f"{cfg.atis.voice.engine!r}"
+            )
+        if not cfg.atis.stations:
+            problems.append(
+                "no ATIS stations: set plugins.atis.stations in config.yaml "
+                "or ATIS_ICAOS=EGLL,EGKK"
             )
         if cfg.atis.voice.loop_silence_seconds < 0:
             problems.append(
@@ -362,11 +424,15 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
     if not isinstance(voice_raw, dict):
         raise ConfigError("plugins.atis.voice must be a mapping")
 
-    stations_raw = atis_raw.get("stations") or []
-    if not isinstance(stations_raw, list):
+    stations_raw = atis_raw.get("stations")
+    if stations_raw in (None, []):
+        stations = stations_from_atis_icaos(os.environ.get("ATIS_ICAOS", ""))
+    elif not isinstance(stations_raw, list):
         raise ConfigError("plugins.atis.stations must be a list")
-    stations = [_station_from_row(row, i) for i, row in enumerate(stations_raw)]
+    else:
+        stations = [_station_from_row(row, i) for i, row in enumerate(stations_raw)]
 
+    voice_backend = resolve_voice_backend(voice_raw)
     cfg = AppConfig(
         server=ServerConfig(
             host=str(server.get("host", "127.0.0.1")),
@@ -417,8 +483,8 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
                 "plugins.atis.reply_rate_window_seconds",
             ),
             voice=VoiceConfig(
-                enabled=bool(voice_raw.get("enabled", False)),
-                backend=str(voice_raw.get("backend", "none")),
+                enabled=resolve_voice_enabled(voice_raw, voice_backend),
+                backend=voice_backend,
                 scrape_url=str(voice_raw.get("scrape_url", "")),
                 cache_dir=str(voice_raw.get("cache_dir", "audio/cache")),
                 engine=str(voice_raw.get("engine", "auto")),
