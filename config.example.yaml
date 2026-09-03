@@ -58,26 +58,30 @@ plugins:
     # TTS writes looping WAV/OGG under audio/cache/{icao}.wav and refreshes
     # only when the information letter changes. Playing that file on frequency
     # is a separate radio sidecar (AFV/SRS) — not this process.
+    #
+    # Omit backend/enabled to default: tts in Docker (or VOICE_BACKEND=tts),
+    # none on the host. An explicit backend here overrides that default.
     voice:
-      enabled: false
-      backend: none          # none | file | tts
       engine: auto           # auto (edge-tts, then piper) | edge-tts | piper
       voice: en-GB-SoniaNeural
       piper_model: ""        # required only when engine is piper
       # scrape_url is ignored. Do not point this at LiveATC.
       scrape_url: ""
       cache_dir: audio/cache
-    stations:
-      - icao: EGLL
-        name: "Heathrow Information"
-        callsign: EGLL_ATIS
-        frequency: 128.080
-        lat: 51.4775
-        lon: -0.4614
-        vis_range_nm: 60
-        facility_type: 4     # Tower — allowed for rating >= S2 on openFSD
-        runways_dep: "27L, 27R"
-        runways_arr: "27L, 27R"
-        approach: "ILS"
-        extra_lines:
-          - "SIMULTANEOUS DEPARTURES IN PROGRESS"
+    # Empty = build from ATIS_ICAOS (see .env.example). An explicit list
+    # here overrides the environment.
+    stations: []
+    # stations:
+    #   - icao: EGLL
+    #     name: "Heathrow Information"
+    #     callsign: EGLL_ATIS
+    #     frequency: 128.080
+    #     lat: 51.4775
+    #     lon: -0.4614
+    #     vis_range_nm: 60
+    #     facility_type: 4     # Tower — allowed for rating >= S2 on openFSD
+    #     runways_dep: "27L, 27R"
+    #     runways_arr: "27L, 27R"
+    #     approach: "ILS"
+    #     extra_lines:
+    #       - "SIMULTANEOUS DEPARTURES IN PROGRESS"

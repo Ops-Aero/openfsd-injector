@@ -1,20 +1,30 @@
-# Same host as opsaero-main (FSD :6809, openfsd API :8010 on the host).
+# Sidecar next to opsaero-main. This repo ships no credentials and does
+# not use docker.env. Copy .env.example → .env, set OPENFSD_CID /
+# OPENFSD_PASSWORD (dedicated ATIS user, not CID 1). No password → the
+# injector exits. Rating 12 → exits unless OPENFSD_ALLOW_ADMINISTRATOR=1.
 #
 #   git clone https://github.com/Ops-Aero/openfsd-injector
 #   cd openfsd-injector
-#   cp .env.example .env      # then edit .env with your own credentials
+#   cp .env.example .env      # then edit CID + password
 #   docker compose up -d --build
 #
-# After the image is on GHCR:
-#   docker compose pull
-#   docker compose up -d
+# Default: extra_hosts → host-published FSD :6809 and API :8010
+# (OPENFSD_HOST=host.docker.internal).
 #
-# This repo ships no credentials. `.env` is git-ignored and you must create it:
-# compose refuses to start without it, and the injector exits with a clear
-# error if no credential is configured.
+# Host network (Linux, FSD on the host loopback) — comment extra_hosts
+# and uncomment:
+#     network_mode: host
+# then OPENFSD_HOST=127.0.0.1 and OPENFSD_API_BASE=http://127.0.0.1:8010
 #
-# Optional: copy config.example.yaml → config.yaml, edit stations, and set
-# OPENFSD_CONFIG=./config.yaml.
+# Join opsaero-main's compose network (service names fsd / fsdweb):
+#   networks:
+#     default:
+#       name: opsaero
+#       external: true
+# then OPENFSD_HOST=fsd and OPENFSD_API_BASE=http://fsdweb:8010
+#
+# Stations: ATIS_ICAOS in .env, or copy config.example.yaml → config.yaml
+# and set OPENFSD_CONFIG=./config.yaml. Voice defaults to tts in Docker.
 
 name: opsaero-injector
 
@@ -30,3 +40,4 @@ services:
       - ./audio:/app/audio
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # network_mode: host
