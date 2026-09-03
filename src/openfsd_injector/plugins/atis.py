@@ -150,7 +150,7 @@ class StationRuntime:
             except Exception:
                 log.exception("NEWATIS broadcast failed for %s", self.station.callsign)
         try:
-            await self.voice.refresh(self.station, self.state.lines)
+            await self.voice.refresh(self.station, self.state.lines, self.state.letter)
         except Exception:
             log.exception("voice refresh failed for %s", self.station.icao)
 

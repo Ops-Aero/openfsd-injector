@@ -6,7 +6,13 @@ from pathlib import Path
 import pytest
 import yaml
 
-from openfsd_injector.config import ConfigError, MissingCredentialError, load_config
+from openfsd_injector.config import (
+    ADMINISTRATOR_RATING,
+    ADMINISTRATOR_RATING_MESSAGE,
+    ConfigError,
+    MissingCredentialError,
+    load_config,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,6 +47,7 @@ ENV_VARS = (
     "OPENFSD_CID",
     "OPENFSD_PASSWORD",
     "OPENFSD_TOKEN",
+    "OPENFSD_ALLOW_ADMINISTRATOR",
     "OPENFSD_CONFIG",
 )
 
@@ -237,6 +244,79 @@ def test_shipped_example_config_carries_no_credential(tmp_path):
 
     with pytest.raises(MissingCredentialError):
         load_config(REPO_ROOT / "config.example.yaml")
+
+
+def test_shipped_example_uses_dedicated_atis_identity_not_admin():
+    """Examples must recommend S2/C1 ATIS identity, never CID 1 / Administrator."""
+    example = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text())
+    assert example["auth"]["cid"] == 0
+    assert example["auth"]["rating"] == 3
+    assert example["auth"]["rating"] <= 5
+    assert example["auth"]["rating"] != ADMINISTRATOR_RATING
+    text = (REPO_ROOT / "config.example.yaml").read_text()
+    assert "cid: 1" not in text
+    assert "CID 1" in text  # mentioned only as something to avoid
+    env = (REPO_ROOT / ".env.example").read_text()
+    assert "OPENFSD_CID=1" not in env
+    assert env.split("OPENFSD_CID=", 1)[1].splitlines()[0].startswith("replace-with-your-own")
+
+
+def test_default_rating_is_s2_not_administrator(tmp_path):
+    def mutate(data):
+        data["auth"].pop("rating", None)
+
+    cfg = load_config(write_config(tmp_path, mutate))
+    assert cfg.auth.rating == 3
+    assert cfg.auth.allow_administrator is False
+
+
+def test_administrator_rating_fails_fast(tmp_path):
+    def mutate(data):
+        data["auth"]["rating"] = ADMINISTRATOR_RATING
+
+    with pytest.raises(ConfigError, match="Administrator") as exc:
+        load_config(write_config(tmp_path, mutate))
+    assert "OPENFSD_ALLOW_ADMINISTRATOR" in str(exc.value)
+    assert ADMINISTRATOR_RATING_MESSAGE in str(exc.value)
+
+
+def test_administrator_rating_allowed_with_config_flag(tmp_path):
+    def mutate(data):
+        data["auth"]["rating"] = ADMINISTRATOR_RATING
+        data["auth"]["allow_administrator"] = True
+
+    cfg = load_config(write_config(tmp_path, mutate))
+    assert cfg.auth.rating == ADMINISTRATOR_RATING
+    assert cfg.auth.allow_administrator is True
+
+
+def test_administrator_rating_allowed_with_env_flag(tmp_path, monkeypatch):
+    def mutate(data):
+        data["auth"]["rating"] = ADMINISTRATOR_RATING
+
+    path = write_config(tmp_path, mutate)
+    monkeypatch.setenv("OPENFSD_ALLOW_ADMINISTRATOR", "1")
+    cfg = load_config(path)
+    assert cfg.auth.allow_administrator is True
+
+
+def test_piper_engine_requires_model(tmp_path):
+    def mutate(data):
+        data["plugins"]["atis"]["voice"] = {
+            "enabled": True,
+            "backend": "tts",
+            "engine": "piper",
+        }
+
+    with pytest.raises(ConfigError, match="piper_model"):
+        load_config(write_config(tmp_path, mutate))
+
+
+def test_c1_rating_is_allowed_without_override(tmp_path):
+    def mutate(data):
+        data["auth"]["rating"] = 5
+
+    assert load_config(write_config(tmp_path, mutate)).auth.rating == 5
 
 
 def test_shipped_env_example_carries_no_credential():

@@ -4,7 +4,7 @@ Plugin injector for a self-hosted [openFSD](https://github.com/renorris/openfsd)
 
 It logs extra ATC stations onto your network and keeps them alive. The first plugin is an **ATIS bot**: one FSD connection per airport, text ATIS built from live METAR, replies to `$CQ ATIS` so pilot clients can pull the information letter.
 
-Voice ATIS that pilots can *tune* is a separate problem — openFSD is the FSD data plane, not Audio for VATSIM. The voice hook is in the repo so the next step has a single place to land.
+Voice ATIS that pilots can *tune* is a separate problem — openFSD is the FSD data plane, not Audio for VATSIM. This repo can generate looping WAV/OGG from the text ATIS; playing that file on frequency is a radio sidecar (see below).
 
 ## OpsAero (opsaero-main)
 
@@ -16,7 +16,9 @@ Voice ATIS that pilots can *tune* is a separate problem — openFSD is the FSD d
 | openfsd admin + `/api/v1/fsd-jwt` | `127.0.0.1:8010` | `server.api_base` |
 | Laravel website | `127.0.0.1:8000` | **not** an FSD API |
 
-Create a **dedicated openFSD account for the injector** and give it the lowest network rating your stations need — do not reuse the administrator account your server install seeded, and change any password that install printed. Requested `auth.rating` must be ≤ the rating stored on that CID. Tower ATIS (`facility_type: 4`) needs at least S2 (3).
+Create a **least-privilege openFSD user for the bot** — a dedicated ATIS identity (`OPENFSD_CID` / `OPENFSD_PASSWORD`), never the bootstrap administrator and never CID 1. Give it the lowest network rating the stations need: S2 (3) for tower ATIS (`facility_type: 4`), and no higher than C1 (5). Requested `auth.rating` must be ≤ the rating stored on that CID.
+
+Startup **fails** if `auth.rating` is Administrator (12) unless you set `auth.allow_administrator` or `OPENFSD_ALLOW_ADMINISTRATOR=1`. Change any password a server install printed.
 
 This repo ships **no credentials and no working defaults**. The injector exits at startup with a clear error if no credential is configured.
 
@@ -66,6 +68,7 @@ OPENFSD_API_BASE=http://fsdweb:8010
 - Answers `RN` and `CAPS` queries
 - Rate-limits `$CQ ATIS` replies per requester so a station cannot be used to amplify traffic
 - Supervises each station's background tasks and reconnects it with backoff when the link drops
+- Optional TTS: looping WAV/OGG from the text ATIS, cached until the information letter changes
 - Plugin-shaped so the next injector (traffic, weather, supervisor tools) is another class, not a rewrite
 
 ## What it does not do yet
@@ -75,20 +78,22 @@ openFSD does **not** stream VHF audio. On VATSIM, voice ATIS rides AFV, which is
 v0.1 therefore:
 
 - Serves **text ATIS** over FSD (works today with vPilot / xPilot / EuroScope / vatSys once they are pointed at your server)
-- Leaves a `voice` backend stub (`none` | `file` | `tts`) for the hourly audio job
+- Generates looping WAV/OGG from the current text ATIS when `voice.backend` is `tts` (cache `audio/cache/{icao}.wav`, refresh only when the information letter changes)
 
-Do **not** scrape LiveATC (or similar) and rebroadcast it. Those feeds are copyrighted and often geo-restricted. Generate speech from the METAR/ATIS text, or use audio you have rights to.
+Do **not** scrape LiveATC (or similar) and rebroadcast it. Those feeds are copyrighted and often geo-restricted. `voice.scrape_url` is ignored.
+
+**Radio egress is a separate sidecar.** This process does not play audio on the station frequency. Pilots only hear the WAV if you run an AFV-compatible stack (TrackAudio) or SRS alongside openFSD — see [issue #2](https://github.com/Ops-Aero/openfsd-injector/issues/2). The FSD side already advertises the frequency in `%` position packets.
 
 ## Quick start
 
-You need an openFSD user (CID + password) that you created for the injector. Protocol revision must be 100 or 101.
+You need a dedicated ATIS identity (CID + password) that you created for the injector — not CID 1, not Administrator. Protocol revision must be 100 or 101.
 
 ```bash
 git clone https://github.com/Ops-Aero/openfsd-injector
 cd openfsd-injector
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,tts]"   # omit ,tts if you do not need edge-tts
 
 cp config.example.yaml config.yaml    # edit stations
 cp .env.example .env                  # edit OPENFSD_CID / OPENFSD_PASSWORD
@@ -101,10 +106,22 @@ Run the tests with `pytest`.
 
 - `OPENFSD_CID` + `OPENFSD_PASSWORD`, or a pre-minted `OPENFSD_TOKEN`, must be supplied by you. There is no built-in fallback: startup fails with an explicit error listing what is missing.
 - Keep them in `.env` (git-ignored) or in a `config.yaml` you do not commit. Never commit a filled-in copy of `.env.example` or `config.example.yaml`.
-- Use a least-privilege account for the injector, not an administrator one. If a server install printed a default password for a seeded account, rotate it and treat it as public.
+- Use a least-privilege ATIS account, never the bootstrap admin / CID 1. Rating 12 is rejected at startup unless `OPENFSD_ALLOW_ADMINISTRATOR=1`. If a server install printed a default password for a seeded account, rotate it and treat it as public.
 - Startup also validates the rest of the config (coordinate ranges, ATIS frequency, timers, duplicate callsigns) and reports every problem at once.
 
 Point `server.host` at the FSD port (`6809`), not a web UI. If you set `server.api_base`, it must be the openfsd HTTP API (`http://127.0.0.1:8010` on OpsAero). Leave `api_base` empty to send the password as the `#AA` token.
+
+### Voice TTS
+
+Set `plugins.atis.voice.enabled: true` and `backend: tts`. The hourly ATIS job then:
+
+1. Speaks the current text lines with **edge-tts** (no GPU; needs network). **piper** is optional if you set `engine: piper` and `piper_model` to an ONNX voice.
+2. Writes `audio/cache/{icao}.wav` (and `{icao}.ogg` when `ffmpeg` can transcode).
+3. Keeps a `{icao}.letter` sidecar and skips synthesis until the information letter changes.
+
+`backend: file` still uses a WAV you drop in `cache_dir`. `backend: none` is silent.
+
+Playing the cached file on 128.080 (or whatever you configured) is **not** this injector — that is the AFV/SRS sidecar in [issue #2](https://github.com/Ops-Aero/openfsd-injector/issues/2).
 
 ## Licence
 

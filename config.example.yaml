@@ -7,8 +7,9 @@
 # via the environment (OPENFSD_CID / OPENFSD_PASSWORD, or OPENFSD_TOKEN — see
 # .env.example) or via a config.yaml you keep out of git.
 #
-# Use a dedicated openFSD account for the injector with the lowest network
-# rating your stations need; do not reuse an administrator account.
+# Use a dedicated ATIS identity (OPENFSD_CID / OPENFSD_PASSWORD) with the
+# lowest network rating your stations need — S2 (3) for tower ATIS, at most
+# C1 (5). Do not use CID 1 or the bootstrap Administrator account.
 
 server:
   host: 127.0.0.1
@@ -18,8 +19,9 @@ server:
   api_base: http://127.0.0.1:8010
 
 auth:
-  # Required: the CID of your own injector account. Startup fails if this is
-  # not a positive integer.
+  # Required: CID of a dedicated ATIS/injector account you created.
+  # Never CID 1 (typical bootstrap admin). Startup fails if this is not a
+  # positive integer.
   cid: 0
   # Required: your own password (or set token / OPENFSD_PASSWORD instead).
   # There is no built-in default — startup fails when both are empty.
@@ -27,10 +29,12 @@ auth:
   # Optional pre-minted JWT. If set, api_base is not called.
   token: ""
   real_name: "ATIS Bot"
-  # Must not exceed the rating stored on your CID.
+  # Must not exceed the rating stored on your CID, and must not be
+  # Administrator (12) unless allow_administrator is set.
   # 1=OBS 2=S1 3=S2 4=S3 5=C1 6=C2 7=C3 8=I1 9=I2 10=I3 11=SUP 12=ADM
-  # Tower ATIS (facility_type 4) needs at least S2 (3).
+  # Tower ATIS (facility_type 4) needs at least S2 (3); stay at or below C1 (5).
   rating: 3
+  # allow_administrator: false
   protocol_revision: 100
   # Harmless client identifier shown in $ID. Not a VATSIM whitelist on openFSD.
   client_id: "0f5d"
@@ -51,11 +55,17 @@ plugins:
     # Max $CQ ATIS replies served to one requester per window.
     reply_rate_limit: 6
     reply_rate_window_seconds: 60
-    # Voice is a stub in v0.1. Files land in audio/cache/.
+    # TTS writes looping WAV/OGG under audio/cache/{icao}.wav and refreshes
+    # only when the information letter changes. Playing that file on frequency
+    # is a separate radio sidecar (AFV/SRS) — not this process.
     voice:
       enabled: false
       backend: none          # none | file | tts
-      scrape_url: ""         # reserved for a future hourly audio grab
+      engine: auto           # auto (edge-tts, then piper) | edge-tts | piper
+      voice: en-GB-SoniaNeural
+      piper_model: ""        # required only when engine is piper
+      # scrape_url is ignored. Do not point this at LiveATC.
+      scrape_url: ""
       cache_dir: audio/cache
     stations:
       - icao: EGLL
