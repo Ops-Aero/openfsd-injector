@@ -23,8 +23,10 @@
 #       external: true
 # then OPENFSD_HOST=fsd and OPENFSD_API_BASE=http://fsdweb:8010
 #
-# Stations: ATIS_ICAOS in .env, or copy config.example.yaml → config.yaml
-# and set OPENFSD_CONFIG=./config.yaml. Voice defaults to tts in Docker.
+# Stations: ATIS_ICAOS in .env (majors list in .env.example), or copy
+# config.example.yaml → config.yaml and set OPENFSD_CONFIG=./config.yaml.
+# Voice defaults to tts in Docker. Audio index is http://injector:8091/atis/index.json
+# on the compose network. Do not publish 8091 on the host unless you opt in.
 
 name: opsaero-injector
 
@@ -41,3 +43,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # network_mode: host
+    # Opt-in host publish of the ATIS audio index (default is compose-network only):
+    # ports:
+    #   - "127.0.0.1:8091:8091"
