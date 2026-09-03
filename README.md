@@ -1,17 +1,56 @@
 # openfsd-injector
 
-Plugin injector for a self-hosted [openFSD](https://github.com/renorris/openfsd) server.
+Plugin injector for a self-hosted [openFSD](https://github.com/renorris/openfsd) server, including the [Ops-Aero/opsaero-main](https://github.com/Ops-Aero/opsaero-main) stack.
 
 It logs extra ATC stations onto your network and keeps them alive. The first plugin is an **ATIS bot**: one FSD connection per airport, text ATIS built from live METAR, replies to `$CQ ATIS` so pilot clients can pull the information letter.
 
 Voice ATIS that pilots can *tune* is a separate problem — openFSD is the FSD data plane, not Audio for VATSIM. The voice hook is in the repo so the next step has a single place to land.
+
+## OpsAero (opsaero-main)
+
+`./install.sh` in opsaero-main publishes:
+
+| Service | Bind | Use from this injector |
+|---|---|---|
+| FSD protocol | `127.0.0.1:6809` | `server.host` / `server.port` |
+| openfsd admin + `/api/v1/fsd-jwt` | `127.0.0.1:8010` | `server.api_base` |
+| Laravel website | `127.0.0.1:8000` | **not** an FSD API |
+
+Seeded protocol user: **CID 1** / **opsaeroadmin** (Administrator). Requested `auth.rating` must be ≤ that (default 5 / C1 is fine). Tower ATIS (`facility_type: 4`) needs at least S2.
+
+openFSD always accepts the CID password as the `#AA` token. JWT minting is optional. If you do mint, the token expires in **five minutes** and is checked only at logon — this injector mints immediately before each station connects.
+
+Do not point `api_base` at `:8000`. That is Laravel; JWT mint will 404.
+
+```bash
+cp config.example.yaml config.yaml
+cp .env.example .env
+python -m openfsd_injector -c config.yaml -v
+```
+
+With Docker, `docker compose up --build` uses `host.docker.internal` so the injector container can reach host-published 6809/8010.
+
+To attach to the OpsAero compose network instead:
+
+```yaml
+# extra keys on this repo's docker-compose.yml
+networks:
+  default:
+    name: opsaero_default
+    external: true
+```
+
+```
+OPENFSD_HOST=fsd
+OPENFSD_API_BASE=http://fsdweb:8010
+```
 
 ## What v0.1 does
 
 - Connects to openFSD as ATC (`$ID` + `#AA`)
 - Sends `%` position updates on the configured ATIS frequency
 - Fetches METAR hourly (Aviation Weather by default)
-- Advances the ATIS letter when the METAR changes
+- Advances the ATIS letter when the METAR changes and broadcasts `$CQ … NEWATIS`
 - Answers `$CQ ATIS` with `V` / `T` / `E` lines the same way VATSIM ATIS stations do
 - Answers `RN` and `CAPS` queries
 - Plugin-shaped so the next injector (traffic, weather, supervisor tools) is another class, not a rewrite
@@ -29,7 +68,7 @@ Do **not** scrape LiveATC (or similar) and rebroadcast it. Those feeds are copyr
 
 ## Quick start
 
-You need an openFSD user (CID + password) created in the web UI. Protocol revision must be 100 or 101.
+You need an openFSD user (CID + password). On a stock OpsAero install that is CID 1. Protocol revision must be 100 or 101.
 
 ```bash
 git clone https://github.com/JayCommit/openfsd-injector
@@ -40,11 +79,10 @@ pip install -e .
 
 cp config.example.yaml config.yaml
 cp .env.example .env
-# edit CID, password, host, and stations
 python -m openfsd_injector -c config.yaml -v
 ```
 
-Point `server.host` at the FSD port (`6809`), not the web UI. Point `server.api_base` at the web API (`http://host:8000`) so the injector can mint a JWT. If your compose file sets `PLAINTEXT_PASSWORDS=true` you can leave `api_base` empty and the password is sent as the `#AA` token.
+Point `server.host` at the FSD port (`6809`), not a web UI. If you set `server.api_base`, it must be the openfsd HTTP API (`http://127.0.0.1:8010` on OpsAero). Leave `api_base` empty to send the password as the `#AA` token.
 
 ## Licence
 
