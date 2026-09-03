@@ -13,7 +13,7 @@ import logging
 
 import httpx
 
-from .config import AppConfig
+from .config import MISSING_CREDENTIAL_MESSAGE, AppConfig, MissingCredentialError
 
 log = logging.getLogger(__name__)
 
@@ -52,12 +52,22 @@ async def mint_fsd_jwt(api_base: str, cid: int, password: str) -> str:
     return token
 
 
+def require_credential(cfg: AppConfig) -> None:
+    """Fail fast, without any network call, when no credential is configured."""
+    if not cfg.auth.token and not cfg.auth.password:
+        raise MissingCredentialError(MISSING_CREDENTIAL_MESSAGE)
+
+
 async def resolve_token(cfg: AppConfig) -> str:
+    """Return the ``#AA`` token, or fail fast if nothing was configured.
+
+    There is deliberately no built-in fallback credential: an unconfigured
+    injector must stop with a clear error rather than try a known default.
+    """
     if cfg.auth.token:
         return cfg.auth.token
+    require_credential(cfg)
     if cfg.server.api_base:
         return await mint_fsd_jwt(cfg.server.api_base, cfg.auth.cid, cfg.auth.password)
-    if not cfg.auth.password:
-        raise RuntimeError("set auth.password, auth.token, or server.api_base")
-    log.info("no api_base configured — sending CID password as FSD token (supported by openFSD/OpsAero)")
+    log.info("no api_base configured — sending the configured CID password as the FSD token")
     return cfg.auth.password

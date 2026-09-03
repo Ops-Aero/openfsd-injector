@@ -1,28 +1,36 @@
-# Defaults match Ops-Aero/opsaero-main after ./install.sh:
-#   FSD protocol     127.0.0.1:6809
+# Ports published by Ops-Aero/opsaero-main after ./install.sh:
+#   FSD protocol      127.0.0.1:6809
 #   openfsd admin API 127.0.0.1:8010   ← JWT mint lives here
-#   Laravel website  127.0.0.1:8000   ← do not use this as api_base
+#   Laravel website   127.0.0.1:8000   ← do not use this as api_base
 #
-# Seeded openfsd user: CID 1 / opsaeroadmin (network rating Administrator).
+# This file contains NO credentials and no working defaults. Supply your own
+# via the environment (OPENFSD_CID / OPENFSD_PASSWORD, or OPENFSD_TOKEN — see
+# .env.example) or via a config.yaml you keep out of git.
+#
+# Use a dedicated openFSD account for the injector with the lowest network
+# rating your stations need; do not reuse an administrator account.
 
 server:
   host: 127.0.0.1
   port: 6809
   # Optional. When set, POST {api_base}/api/v1/fsd-jwt immediately before #AA.
-  # Leave empty to send the CID password as the FSD token — openFSD always
-  # accepts that (no PLAINTEXT_PASSWORDS flag is required on OpsAero).
+  # Leave empty to send the CID password as the FSD token — openFSD accepts that.
   api_base: http://127.0.0.1:8010
 
 auth:
-  cid: 1
-  password: opsaeroadmin
+  # Required: the CID of your own injector account. Startup fails if this is
+  # not a positive integer.
+  cid: 0
+  # Required: your own password (or set token / OPENFSD_PASSWORD instead).
+  # There is no built-in default — startup fails when both are empty.
+  password: ""
   # Optional pre-minted JWT. If set, api_base is not called.
   token: ""
   real_name: "ATIS Bot"
-  # Must not exceed the CID's stored rating. CID 1 is Administrator (12).
-  # 1=OBS 2=S1 3=S2 4=S3 5=C1 7=C3 8=I1 11=SUP 12=ADM
+  # Must not exceed the rating stored on your CID.
+  # 1=OBS 2=S1 3=S2 4=S3 5=C1 6=C2 7=C3 8=I1 9=I2 10=I3 11=SUP 12=ADM
   # Tower ATIS (facility_type 4) needs at least S2 (3).
-  rating: 5
+  rating: 3
   protocol_revision: 100
   # Harmless client identifier shown in $ID. Not a VATSIM whitelist on openFSD.
   client_id: "0f5d"
@@ -40,6 +48,9 @@ plugins:
     # How often to rebuild text ATIS from METAR.
     refresh_seconds: 3600
     metar_url: "https://aviationweather.gov/api/data/metar?ids={icao}&format=raw"
+    # Max $CQ ATIS replies served to one requester per window.
+    reply_rate_limit: 6
+    reply_rate_window_seconds: 60
     # Voice is a stub in v0.1. Files land in audio/cache/.
     voice:
       enabled: false
