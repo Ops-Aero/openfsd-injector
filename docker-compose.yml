@@ -1,15 +1,20 @@
 # Same host as opsaero-main (FSD :6809, openfsd API :8010 on the host).
 #
-#   git clone https://github.com/JayCommit/openfsd-injector
+#   git clone https://github.com/Ops-Aero/openfsd-injector
 #   cd openfsd-injector
+#   cp .env.example .env      # then edit .env with your own credentials
 #   docker compose up -d --build
 #
 # After the image is on GHCR:
 #   docker compose pull
 #   docker compose up -d
 #
-# Optional: copy config.example.yaml → config.yaml and edit stations.
-# Do not copy opsaero-main/.env — injector env is docker.env in this repo.
+# This repo ships no credentials. `.env` is git-ignored and you must create it:
+# compose refuses to start without it, and the injector exits with a clear
+# error if no credential is configured.
+#
+# Optional: copy config.example.yaml → config.yaml, edit stations, and set
+# OPENFSD_CONFIG=./config.yaml.
 
 name: opsaero-injector
 
@@ -19,13 +24,7 @@ services:
     build: .
     restart: unless-stopped
     env_file:
-      - docker.env
-    environment:
-      OPENFSD_HOST: ${OPENFSD_HOST:-host.docker.internal}
-      OPENFSD_PORT: ${OPENFSD_PORT:-6809}
-      OPENFSD_API_BASE: ${OPENFSD_API_BASE:-http://host.docker.internal:8010}
-      OPENFSD_CID: ${OPENFSD_CID:-1}
-      OPENFSD_PASSWORD: ${OPENFSD_PASSWORD:-opsaeroadmin}
+      - .env
     volumes:
       - ${OPENFSD_CONFIG:-./config.example.yaml}:/app/config.yaml:ro
       - ./audio:/app/audio

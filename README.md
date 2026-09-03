@@ -16,20 +16,23 @@ Voice ATIS that pilots can *tune* is a separate problem — openFSD is the FSD d
 | openfsd admin + `/api/v1/fsd-jwt` | `127.0.0.1:8010` | `server.api_base` |
 | Laravel website | `127.0.0.1:8000` | **not** an FSD API |
 
-Seeded protocol user: **CID 1** / **opsaeroadmin** (Administrator). Requested `auth.rating` must be ≤ that (default 5 / C1 is fine). Tower ATIS (`facility_type: 4`) needs at least S2.
+Create a **dedicated openFSD account for the injector** and give it the lowest network rating your stations need — do not reuse the administrator account your server install seeded, and change any password that install printed. Requested `auth.rating` must be ≤ the rating stored on that CID. Tower ATIS (`facility_type: 4`) needs at least S2 (3).
+
+This repo ships **no credentials and no working defaults**. The injector exits at startup with a clear error if no credential is configured.
 
 openFSD always accepts the CID password as the `#AA` token. JWT minting is optional. If you do mint, the token expires in **five minutes** and is checked only at logon — this injector mints immediately before each station connects.
 
 Do not point `api_base` at `:8000`. That is Laravel; JWT mint will 404.
 
 ```bash
-git clone https://github.com/JayCommit/openfsd-injector
+git clone https://github.com/Ops-Aero/openfsd-injector
 cd openfsd-injector
+cp .env.example .env      # then edit .env with your own CID + password
 docker compose up -d --build
 docker compose logs -f
 ```
 
-That talks to host-published FSD `:6809` and openfsd API `:8010` via `host.docker.internal`. No `.env` required (CID 1 / `opsaeroadmin`). Edit stations by copying `config.example.yaml` to `config.yaml` and setting `OPENFSD_CONFIG=./config.yaml`.
+That talks to host-published FSD `:6809` and openfsd API `:8010` via `host.docker.internal`. `.env` is **required** and git-ignored: compose will not start without it, and the injector refuses to run without a credential. Edit stations by copying `config.example.yaml` to `config.yaml` and setting `OPENFSD_CONFIG=./config.yaml`.
 
 After the image is on GHCR:
 
@@ -61,6 +64,8 @@ OPENFSD_API_BASE=http://fsdweb:8010
 - Advances the ATIS letter when the METAR changes and broadcasts `$CQ … NEWATIS`
 - Answers `$CQ ATIS` with `V` / `T` / `E` lines the same way VATSIM ATIS stations do
 - Answers `RN` and `CAPS` queries
+- Rate-limits `$CQ ATIS` replies per requester so a station cannot be used to amplify traffic
+- Supervises each station's background tasks and reconnects it with backoff when the link drops
 - Plugin-shaped so the next injector (traffic, weather, supervisor tools) is another class, not a rewrite
 
 ## What it does not do yet
@@ -76,19 +81,28 @@ Do **not** scrape LiveATC (or similar) and rebroadcast it. Those feeds are copyr
 
 ## Quick start
 
-You need an openFSD user (CID + password). On a stock OpsAero install that is CID 1. Protocol revision must be 100 or 101.
+You need an openFSD user (CID + password) that you created for the injector. Protocol revision must be 100 or 101.
 
 ```bash
-git clone https://github.com/JayCommit/openfsd-injector
+git clone https://github.com/Ops-Aero/openfsd-injector
 cd openfsd-injector
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
 
-cp config.example.yaml config.yaml
-cp .env.example .env
+cp config.example.yaml config.yaml    # edit stations
+cp .env.example .env                  # edit OPENFSD_CID / OPENFSD_PASSWORD
 python -m openfsd_injector -c config.yaml -v
 ```
+
+Run the tests with `pytest`.
+
+### Credentials
+
+- `OPENFSD_CID` + `OPENFSD_PASSWORD`, or a pre-minted `OPENFSD_TOKEN`, must be supplied by you. There is no built-in fallback: startup fails with an explicit error listing what is missing.
+- Keep them in `.env` (git-ignored) or in a `config.yaml` you do not commit. Never commit a filled-in copy of `.env.example` or `config.example.yaml`.
+- Use a least-privilege account for the injector, not an administrator one. If a server install printed a default password for a seeded account, rotate it and treat it as public.
+- Startup also validates the rest of the config (coordinate ranges, ATIS frequency, timers, duplicate callsigns) and reports every problem at once.
 
 Point `server.host` at the FSD port (`6809`), not a web UI. If you set `server.api_base`, it must be the openfsd HTTP API (`http://127.0.0.1:8010` on OpsAero). Leave `api_base` empty to send the password as the `#AA` token.
 

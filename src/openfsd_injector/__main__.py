@@ -5,8 +5,10 @@ import asyncio
 import logging
 import os
 
-from .config import load_config
+from .config import ConfigError, load_config
 from .injector import Injector
+
+log = logging.getLogger("openfsd_injector")
 
 
 def main() -> None:
@@ -23,8 +25,16 @@ def main() -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    cfg = load_config(args.config)
-    asyncio.run(Injector(cfg).run())
+    try:
+        cfg = load_config(args.config)
+    except ConfigError as exc:
+        log.error("%s", exc)
+        raise SystemExit(2) from None
+    try:
+        asyncio.run(Injector(cfg).run())
+    except ConfigError as exc:
+        log.error("%s", exc)
+        raise SystemExit(2) from None
 
 
 if __name__ == "__main__":
