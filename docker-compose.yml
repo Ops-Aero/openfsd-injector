@@ -9,7 +9,7 @@
 #   docker compose up -d
 #
 # Optional: copy config.example.yaml → config.yaml and edit stations.
-# Optional: copy .env.example → .env for CID/password overrides.
+# Do not copy opsaero-main/.env — injector env is docker.env in this repo.
 
 name: opsaero-injector
 
@@ -18,6 +18,8 @@ services:
     image: ghcr.io/jaycommit/openfsd-injector:latest
     build: .
     restart: unless-stopped
+    env_file:
+      - docker.env
     environment:
       OPENFSD_HOST: ${OPENFSD_HOST:-host.docker.internal}
       OPENFSD_PORT: ${OPENFSD_PORT:-6809}
