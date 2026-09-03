@@ -23,12 +23,20 @@ openFSD always accepts the CID password as the `#AA` token. JWT minting is optio
 Do not point `api_base` at `:8000`. That is Laravel; JWT mint will 404.
 
 ```bash
-cp config.example.yaml config.yaml
-cp .env.example .env
-python -m openfsd_injector -c config.yaml -v
+git clone https://github.com/JayCommit/openfsd-injector
+cd openfsd-injector
+docker compose up -d --build
+docker compose logs -f
 ```
 
-With Docker, `docker compose up --build` uses `host.docker.internal` so the injector container can reach host-published 6809/8010.
+That talks to host-published FSD `:6809` and openfsd API `:8010` via `host.docker.internal`. No `.env` required (CID 1 / `opsaeroadmin`). Edit stations by copying `config.example.yaml` to `config.yaml` and setting `OPENFSD_CONFIG=./config.yaml`.
+
+After the image is on GHCR:
+
+```bash
+docker compose pull
+docker compose up -d
+```
 
 To attach to the OpsAero compose network instead:
 

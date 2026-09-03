@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 
 from .config import load_config
 from .injector import Injector
@@ -10,7 +11,11 @@ from .injector import Injector
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="openfsd-injector")
-    parser.add_argument("-c", "--config", default="config.yaml")
+    parser.add_argument(
+        "-c",
+        "--config",
+        default=os.environ.get("OPENFSD_CONFIG", "config.yaml"),
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 

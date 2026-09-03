@@ -1,27 +1,31 @@
-# Run beside Ops-Aero/opsaero-main on the same host.
-# opsaero-main publishes FSD :6809 and openfsd admin :8010 on the host.
+# Same host as opsaero-main (FSD :6809, openfsd API :8010 on the host).
 #
-#   cp config.example.yaml config.yaml
-#   cp .env.example .env
-#   docker compose up --build
+#   git clone https://github.com/JayCommit/openfsd-injector
+#   cd openfsd-injector
+#   docker compose up -d --build
 #
-# To join the OpsAero compose network instead of host ports, set:
-#   OPENFSD_HOST=fsd
-#   OPENFSD_API_BASE=http://fsdweb:8010
-# and add:
-#   networks: { default: { external: true, name: opsaero_default } }
+# After the image is on GHCR:
+#   docker compose pull
+#   docker compose up -d
+#
+# Optional: copy config.example.yaml → config.yaml and edit stations.
+# Optional: copy .env.example → .env for CID/password overrides.
+
+name: opsaero-injector
 
 services:
   injector:
+    image: ghcr.io/jaycommit/openfsd-injector:latest
     build: .
     restart: unless-stopped
-    env_file: .env
     environment:
       OPENFSD_HOST: ${OPENFSD_HOST:-host.docker.internal}
       OPENFSD_PORT: ${OPENFSD_PORT:-6809}
       OPENFSD_API_BASE: ${OPENFSD_API_BASE:-http://host.docker.internal:8010}
+      OPENFSD_CID: ${OPENFSD_CID:-1}
+      OPENFSD_PASSWORD: ${OPENFSD_PASSWORD:-opsaeroadmin}
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ${OPENFSD_CONFIG:-./config.example.yaml}:/app/config.yaml:ro
       - ./audio:/app/audio
     extra_hosts:
       - "host.docker.internal:host-gateway"
