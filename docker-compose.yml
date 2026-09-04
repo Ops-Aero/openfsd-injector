@@ -27,6 +27,8 @@
 # config.example.yaml → config.yaml and set OPENFSD_CONFIG=./config.yaml.
 # Voice defaults to tts in Docker. Audio index is http://injector:8091/atis/index.json
 # on the compose network. Do not publish 8091 on the host unless you opt in.
+# On the opsaero compose network, set SRS_HOST=srs (and SRS_PORT=5002 if you
+# override the default) so ATIS WAVs also TX on the self-hosted SRS.
 
 name: opsaero-injector
 

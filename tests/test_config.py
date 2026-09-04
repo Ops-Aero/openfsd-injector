@@ -57,6 +57,11 @@ ENV_VARS = (
     "AUDIO_HTTP_PORT",
     "AUDIO_HTTP_PUBLISH",
     "SRS_HOST",
+    "SRS_PORT",
+    "SRS_TX",
+    "SRS_EAM_PASSWORD",
+    "SRS_NAME",
+    "SRS_COALITION",
 )
 
 
@@ -487,3 +492,20 @@ def test_shipped_env_example_carries_no_credential():
     assert "name: opsaero" in compose
     assert "OPENFSD_HOST=fsd" in compose
     assert "http://fsdweb:8010" in compose
+    assert "SRS_HOST" in compose
+
+
+def test_srs_port_must_be_in_range(tmp_path):
+    def mutate(data):
+        data["plugins"]["atis"]["audio_http"] = {"srs_port": 0}
+
+    with pytest.raises(ConfigError, match="srs_port"):
+        load_config(write_config(tmp_path, mutate))
+
+
+def test_srs_coalition_must_be_0_1_or_2(tmp_path):
+    def mutate(data):
+        data["plugins"]["atis"]["audio_http"] = {"srs_coalition": 4}
+
+    with pytest.raises(ConfigError, match="srs_coalition"):
+        load_config(write_config(tmp_path, mutate))

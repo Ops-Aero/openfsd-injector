@@ -3,6 +3,7 @@ from openfsd_injector.protocol import (
     build_atc_position,
     build_new_atis,
     encode_frequency,
+    frequency_hz,
     parse_query,
 )
 
@@ -11,6 +12,14 @@ def test_encode_frequency():
     assert encode_frequency(122.800) == "22800"
     assert encode_frequency(128.080) == "28080"
     assert encode_frequency(118.100) == "18100"
+
+
+def test_frequency_hz_matches_fsd_rounding():
+    """SRS integer Hz is the same COM FSD advertises in ``%`` packets."""
+    assert frequency_hz(128.080) == 128_080_000
+    assert frequency_hz(122.800) == 122_800_000
+    assert frequency_hz(136.355) == 136_355_000
+    assert frequency_hz(118.100) == 118_100_000
 
 
 def test_add_atc_field_count():
