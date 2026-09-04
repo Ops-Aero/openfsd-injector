@@ -42,7 +42,9 @@ No auth on the compose network. The process binds `0.0.0.0:8091` **inside** the 
 
 The index refreshes when an information letter / wav changes. Do **not** scrape LiveATC.
 
-Pointing a radio client at that index is the first-party Linux/Docker path. Playing on frequency (AFV / SRS transmit) is still [issue #2](https://github.com/Ops-Aero/openfsd-injector/issues/2). `SRS_HOST` is reserved and default-off; there is no Windows-only `DCS-SR-ExternalAudio.exe` in this image.
+Pointing a radio client at that index is the first-party Linux/Docker path and still works when SRS is off.
+
+When `SRS_HOST` is set (non-empty), the same cached WAVs are also looped onto each station’s published ATIS COM via **self-hosted ciribob SRS 2.x** (TrackAudio / SRS clients). This is not VATSIM AFV. There is no Windows-only `DCS-SR-ExternalAudio.exe` in this image.
 
 ## Plug into opsaero-main
 
@@ -63,6 +65,15 @@ OPENFSD_API_BASE=http://fsdweb:8010
 
 Audio index from another service on that network: `http://injector:8091/atis/index.json`.
 
+On opsaero-main, the `srs` service is always-on (`flisher/dcs-srs-server:ciribob-2.4.0.0`, TCP+UDP 5002). Set this on the `atis` service so the injector can TX:
+
+```
+SRS_HOST=srs
+SRS_PORT=5002
+```
+
+That opsaero-main env change is a follow-up in the main repo (this injector does not edit that compose file). Leave `SRS_HOST` empty here to stay HTTP-only.
+
 Do not point the API at Laravel `:8000`. Rating 12 is refused unless `OPENFSD_ALLOW_ADMINISTRATOR=1`.
 
 `./install.sh` in opsaero-main publishes FSD `:6809`, openfsd admin `:8010` (JWT mint), and Laravel `:8000` (not an FSD API).
@@ -79,19 +90,40 @@ Do not point the API at Laravel `:8000`. Rating 12 is refused unless `OPENFSD_AL
 - Supervises each station's background tasks and reconnects it with backoff when the link drops
 - Optional TTS: looping WAV/OGG from the text ATIS, cached until the information letter changes
 - Serves the audio index over HTTP for opsaero-main / a radio client
+- Optional: when `SRS_HOST` is set, registers each station with a cached WAV as a radio on its integer-Hz COM and loops Opus onto the SRS UDP voice path
 - Plugin-shaped so the next injector (traffic, weather, supervisor tools) is another class, not a rewrite
 
-## What it does not do yet
+## Voice: HTTP index and optional SRS TX
 
-openFSD does **not** stream VHF audio. On VATSIM, voice ATIS rides AFV. On a private server you need a radio stack the pilot client can use (TrackAudio / SRS).
+openFSD does **not** stream VHF audio. On VATSIM, voice ATIS rides AFV — this injector does **not** speak AFV. On OpsAero, pilots use the self-hosted SRS (TrackAudio / SRS client).
 
 - Serves **text ATIS** over FSD (vPilot / xPilot / EuroScope / vatSys once pointed at your server)
 - Generates looping WAV/OGG when `voice.backend` is `tts` (`audio/cache/{icao}.wav`, refresh only when the information letter changes)
 - Serves those files at `http://injector:8091/atis/…`
+- When `SRS_HOST` is non-empty, connects to ciribob SRS TCP control (default `SRS_PORT=5002`) and loops each cached WAV onto that station’s COM as **integer Hz** (the same frequency the FSD `%` packet advertises)
 
 Do **not** scrape LiveATC. `voice.scrape_url` is ignored.
 
-**Radio egress** (actually keying the frequency) remains [issue #2](https://github.com/Ops-Aero/openfsd-injector/issues/2).
+### SRS (self-hosted, default off)
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `SRS_HOST` | empty | Empty = current behaviour (HTTP only). Set `srs` on the opsaero-main compose network. |
+| `SRS_PORT` | `5002` | TCP control + UDP Opus. Same port the `srs` service publishes. |
+| `SRS_TX` | `1` | `0` = TCP radio presence only; HTTP audio stays. Does **not** pretend UDP voice works. |
+| `SRS_NAME` | `OPSAERO_ATIS` | One SRS client identity for the whole process. |
+| `SRS_COALITION` | `0` | Spectator. `1` red / `2` blue if you enable coalition audio security. |
+| `SRS_EAM_PASSWORD` | empty | Optional External AWACS Mode password. Env only — never put it in yaml or git. |
+
+**Identity:** one FSD CID is unchanged. SRS is a **separate** radio identity: **one TCP+UDP connection with many radios** (External Audio / EAM-style). SRS 2.x accepts that. The client list shows `OPSAERO_ATIS`; each radio is named after the station callsign (`EGLL_ATIS`, …) and tuned to that station’s integer Hz. We do **not** open one SRS connection per station.
+
+**Expected server:** `flisher/dcs-srs-server:ciribob-2.4.0.0` (the image opsaero-main pins). Protocol subset is ciribob 2.4 TCP JSON + `UDPVoicePacket` (16 kHz mono Opus, 40 ms frames). Radio encryption and a server connection password are **not** implemented; the default opsaero image has neither. If you turn those on, set `SRS_TX=0` and keep HTTP.
+
+**Uptime:** a down or missing SRS server is retried in the background. The injector stays up and HTTP audio keeps working. Empty `SRS_HOST` does not open a socket.
+
+**TX honesty:** tests send framed UDP against a fake TCP/UDP peer, or mark Opus unavailable when `libopus` is missing. The image installs `libopus0`. `SRS_TX=0` is the documented fallback that keeps HTTP.
+
+**Follow-up for opsaero-main:** on the `atis` service environment, set `SRS_HOST=srs` (and `SRS_PORT=5002` if you override the default). Land that in the main repo; this injector PR does not edit opsaero-main.
 
 ## Host / Python
 

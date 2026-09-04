@@ -11,6 +11,7 @@ from pathlib import Path
 from ..atis.audio_http import AudioCatalog, AudioHttpServer
 from ..atis.builder import AtisState, build_lines, next_letter
 from ..atis.metar import fetch_metar
+from ..atis.srs import SrsBridge
 from ..atis.voice import VoiceBackend
 from ..auth import require_credential, resolve_token
 from ..client import FsdClient
@@ -309,6 +310,8 @@ class AtisPlugin(Plugin):
         self._supervisors: list[StationSupervisor] = []
         self._catalog: AudioCatalog | None = None
         self._audio_http: AudioHttpServer | None = None
+        self._srs: SrsBridge | None = None
+        self._srs_task: asyncio.Task | None = None
 
     async def start(self) -> None:
         if not self.cfg.atis.enabled:
@@ -342,10 +345,15 @@ class AtisPlugin(Plugin):
                 self._audio_http.bound_port,
             )
         if self.cfg.atis.audio_http.srs_host:
+            self._srs = SrsBridge(self.cfg, self._catalog)
+            self._srs_task = asyncio.create_task(self._run_srs(), name="srs-bridge")
             log.info(
-                "SRS_HOST=%s is set but no in-process Linux SRS transmitter "
-                "is bundled — use the audio HTTP index; radio egress remains issue #2",
+                "SRS_HOST=%s SRS_PORT=%s SRS_TX=%s — one process, many radios "
+                "(name %s); HTTP audio stays on even if SRS is down",
                 self.cfg.atis.audio_http.srs_host,
+                self.cfg.atis.audio_http.srs_port,
+                int(self.cfg.atis.audio_http.srs_tx),
+                self.cfg.atis.audio_http.srs_name,
             )
         self._supervisors = [
             StationSupervisor(self.cfg, st, catalog=self._catalog)
@@ -372,8 +380,29 @@ class AtisPlugin(Plugin):
         await asyncio.gather(
             *(s.stop() for s in supervisors), return_exceptions=True
         )
+        srs_task, self._srs_task = self._srs_task, None
+        srs, self._srs = self._srs, None
+        if srs is not None:
+            with contextlib.suppress(Exception):
+                await srs.stop()
+        if srs_task is not None:
+            srs_task.cancel()
+            await asyncio.gather(srs_task, return_exceptions=True)
         server, self._audio_http = self._audio_http, None
         if server is not None:
             with contextlib.suppress(Exception):
                 await server.stop()
         self._catalog = None
+
+    async def _run_srs(self) -> None:
+        """SRS failures stay here — they must not fail :meth:`wait` / FSD."""
+        if self._srs is None:
+            return
+        try:
+            await self._srs.run()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception(
+                "SRS bridge crashed — injector stays up; HTTP audio remains"
+            )

@@ -49,6 +49,11 @@ def isolated_env(monkeypatch, tmp_path):
         "AUDIO_HTTP_PORT",
         "AUDIO_HTTP_PUBLISH",
         "SRS_HOST",
+        "SRS_PORT",
+        "SRS_TX",
+        "SRS_EAM_PASSWORD",
+        "SRS_NAME",
+        "SRS_COALITION",
         "ATIS_ICAOS",
         "VOICE_BACKEND",
         "OPENFSD_CID",
@@ -207,6 +212,8 @@ def test_load_config_audio_http_defaults_and_env(tmp_path, monkeypatch):
     assert cfg.atis.audio_http.host == "127.0.0.1"
     assert cfg.atis.audio_http.port == 8091
     assert cfg.atis.audio_http.srs_host == ""
+    assert cfg.atis.audio_http.srs_port == 5002
+    assert cfg.atis.audio_http.srs_tx is True
 
     monkeypatch.setenv("AUDIO_HTTP_PUBLISH", "1")
     monkeypatch.setenv("AUDIO_HTTP_PORT", "8099")

@@ -59,7 +59,8 @@ plugins:
     # only when the information letter changes. This process also serves those
     # files over HTTP for opsaero-main / a radio client:
     #   http://injector:8091/atis/index.json
-    # Playing on frequency (AFV/SRS transmit) is still issue #2.
+    # When SRS_HOST is set, the same WAVs are also looped onto each station's
+    # COM via ciribob SRS 2.x (not AFV). Empty SRS_HOST = HTTP only.
     #
     # Omit backend/enabled to default: tts in Docker (or VOICE_BACKEND=tts),
     # none on the host. An explicit backend here overrides that default.
@@ -75,7 +76,11 @@ plugins:
     audio_http:
       enabled: true
       port: 8091
-      # srs_host: ""         # reserved; empty = off
+      # srs_host: ""         # empty = off. opsaero-main: SRS_HOST=srs
+      # srs_port: 5002
+      # srs_tx: true         # false / SRS_TX=0 = TCP radios only, HTTP remains
+      # srs_name: OPSAERO_ATIS
+      # srs_coalition: 0     # spectator. Do not put EAM passwords in yaml.
     # Empty = build from ATIS_ICAOS (see .env.example majors list). An
     # explicit list here overrides the environment.
     stations: []

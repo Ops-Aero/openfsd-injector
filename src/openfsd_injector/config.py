@@ -41,6 +41,8 @@ MAX_VIS_RANGE_NM = 1500
 SUPPORTED_VOICE_BACKENDS = ("", "none", "file", "tts")
 SUPPORTED_VOICE_ENGINES = ("", "auto", "edge-tts", "piper")
 DEFAULT_AUDIO_HTTP_PORT = 8091
+DEFAULT_SRS_PORT = 5002
+DEFAULT_SRS_NAME = "OPSAERO_ATIS"
 ADMINISTRATOR_RATING_MESSAGE = (
     "auth.rating 12 (Administrator) is refused: create a dedicated "
     "least-privilege openFSD user for the injector (S2/3 for tower ATIS, "
@@ -94,13 +96,27 @@ class VoiceConfig:
 
 @dataclass
 class AudioHttpConfig:
-    """Serve cached WAV/OGG on an internal port for opsaero-main/client."""
+    """Serve cached WAV/OGG on an internal port for opsaero-main/client.
+
+    ``srs_host`` empty = HTTP only (current default). When set, the injector
+    also registers ATIS radios on a self-hosted ciribob SRS 2.x server
+    (opsaero-main ``flisher/dcs-srs-server:ciribob-2.4.0.0`` on 5002).
+    SRS is never required for the process to stay up.
+    """
 
     enabled: bool = True
     host: str = "0.0.0.0"
     port: int = DEFAULT_AUDIO_HTTP_PORT
-    # Reserved. Empty = off. Do not block on a full SRS client.
+    # Empty = off. opsaero-main should set SRS_HOST=srs on the atis service.
     srs_host: str = ""
+    srs_port: int = DEFAULT_SRS_PORT
+    # False = TCP radio presence only; HTTP audio stays. Do not pretend TX.
+    srs_tx: bool = True
+    srs_name: str = DEFAULT_SRS_NAME
+    # 0=spectator 1=red 2=blue. Spectator is correct for a civil ATIS bot.
+    srs_coalition: int = 0
+    # Env-only (SRS_EAM_PASSWORD). Never read from yaml / never commit.
+    srs_eam_password: str = ""
 
 
 @dataclass
@@ -253,6 +269,45 @@ def resolve_srs_host(audio_raw: dict[str, Any]) -> str:
     return str(audio_raw.get("srs_host", "")).strip()
 
 
+def resolve_srs_port(audio_raw: dict[str, Any]) -> int:
+    env = os.environ.get("SRS_PORT")
+    if env is not None and env.strip() != "":
+        return _as_int(env, "SRS_PORT")
+    return _as_int(audio_raw.get("srs_port", DEFAULT_SRS_PORT), "plugins.atis.audio_http.srs_port")
+
+
+def resolve_srs_tx(audio_raw: dict[str, Any]) -> bool:
+    """``SRS_TX`` wins; else yaml; else on (only used when ``SRS_HOST`` is set)."""
+    env = os.environ.get("SRS_TX")
+    if env is not None and env.strip() != "":
+        return _as_bool(env, "SRS_TX")
+    if "srs_tx" in audio_raw:
+        return _as_bool(audio_raw["srs_tx"], "plugins.atis.audio_http.srs_tx")
+    return True
+
+
+def resolve_srs_name(audio_raw: dict[str, Any]) -> str:
+    env = os.environ.get("SRS_NAME")
+    if env is not None and env.strip() != "":
+        return env.strip()
+    raw = audio_raw.get("srs_name")
+    if raw not in (None, ""):
+        return str(raw).strip()
+    return DEFAULT_SRS_NAME
+
+
+def resolve_srs_coalition(audio_raw: dict[str, Any]) -> int:
+    env = os.environ.get("SRS_COALITION")
+    if env is not None and env.strip() != "":
+        return _as_int(env, "SRS_COALITION")
+    return _as_int(audio_raw.get("srs_coalition", 0), "plugins.atis.audio_http.srs_coalition")
+
+
+def resolve_srs_eam_password() -> str:
+    """EAM password is env-only so it cannot be committed in config.yaml."""
+    return os.environ.get("SRS_EAM_PASSWORD", "").strip()
+
+
 def stations_from_atis_icaos(value: str) -> list[StationConfig]:
     """Build stations from ``ATIS_ICAOS`` using the built-in airport table."""
     stations: list[StationConfig] = []
@@ -402,6 +457,18 @@ def validate_config(cfg: AppConfig) -> None:
                     "plugins.atis.audio_http.port must be between 0 and 65535, "
                     f"got {cfg.atis.audio_http.port}"
                 )
+        if not 1 <= cfg.atis.audio_http.srs_port <= 65535:
+            problems.append(
+                "plugins.atis.audio_http.srs_port must be between 1 and 65535, "
+                f"got {cfg.atis.audio_http.srs_port}"
+            )
+        if cfg.atis.audio_http.srs_coalition not in (0, 1, 2):
+            problems.append(
+                "plugins.atis.audio_http.srs_coalition must be 0 (spectator), "
+                f"1 (red) or 2 (blue), got {cfg.atis.audio_http.srs_coalition}"
+            )
+        if cfg.atis.audio_http.srs_host and not cfg.atis.audio_http.srs_name.strip():
+            problems.append("plugins.atis.audio_http.srs_name must not be empty when SRS_HOST is set")
 
         seen: dict[str, int] = {}
         for index, st in enumerate(cfg.atis.stations):
@@ -565,6 +632,11 @@ def load_config(path: str | Path | None = None, validate: bool = True) -> AppCon
                 host=resolve_audio_http_host(audio_http_raw),
                 port=resolve_audio_http_port(audio_http_raw),
                 srs_host=resolve_srs_host(audio_http_raw),
+                srs_port=resolve_srs_port(audio_http_raw),
+                srs_tx=resolve_srs_tx(audio_http_raw),
+                srs_name=resolve_srs_name(audio_http_raw),
+                srs_coalition=resolve_srs_coalition(audio_http_raw),
+                srs_eam_password=resolve_srs_eam_password(),
             ),
             stations=stations,
         ),

@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 
+def frequency_khz(mhz: float) -> int:
+    """Integer kHz, rounded the same way FSD ``%`` packets encode the COM."""
+    khz = int(round(mhz * 1000))
+    if not 100_000 <= khz <= 199_999:
+        raise ValueError(f"frequency out of aviation VHF range: {mhz}")
+    return khz
+
+
 def encode_frequency(mhz: float) -> str:
     """Encode 128.080 MHz as the 5-digit FSD form `28080` (drop the leading 1)."""
-    khz = int(round(mhz * 1000))
-    if 100_000 <= khz <= 199_999:
-        return f"{khz - 100_000:05d}"
-    raise ValueError(f"frequency out of aviation VHF range: {mhz}")
+    return f"{frequency_khz(mhz) - 100_000:05d}"
+
+
+def frequency_hz(mhz: float) -> int:
+    """Integer Hz for SRS / TrackAudio. 128.080 MHz → ``128080000``.
+
+    Same rounding as :func:`encode_frequency`, so the radio matches the FSD
+    ``%`` advertisement.
+    """
+    return frequency_khz(mhz) * 1000
 
 
 def decode_frequency(encoded: str) -> float:
